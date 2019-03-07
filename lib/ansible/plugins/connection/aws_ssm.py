@@ -14,8 +14,6 @@ description:
 - This connection plugin allows ansible to execute tasks on an EC2 instance via the aws ssm CLI.
 version_added: "2.8"
 requirements:
-- The control machine and the remote EC2 instance must have the aws CLI installed.
-- The control machine and the remote EC2 instance must have access to the S3 bucket.
 - The control machine must have the aws session manager plugin installed.
 - The remote EC2 instance must have the curl installed.
 options:
@@ -217,10 +215,10 @@ class Connection(ConnectionBase):
         self._flush_stderr(session)
 
         # Send the command
-        if sudoable == True:
+        if sudoable:
             cmd = "sudo " + cmd
 
-        # Handle the back-end throttling 
+        # Handle the back-end throttling
         for c in cmd:
             session.stdin.write(c)
             time.sleep(10 / 1000.0)
