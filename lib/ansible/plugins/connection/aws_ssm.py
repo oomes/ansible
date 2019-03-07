@@ -17,6 +17,7 @@ requirements:
 - The control machine and the remote EC2 instance must have the aws CLI installed.
 - The control machine and the remote EC2 instance must have access to the S3 bucket.
 - The control machine must have the aws session manager plugin installed.
+- The remote EC2 instance must have the curl installed.
 options:
   instance_id:
     description: The EC2 instance ID.
@@ -295,11 +296,14 @@ class Connection(ConnectionBase):
         put_command = 'curl --request PUT --upload-file %s "%s"' % (in_path, self._get_url('put_object', self.get_option('bucket_name'), out_path, 'PUT'))
         get_command = 'curl -v "%s" -o %s' % (self._get_url('get_object', self.get_option('bucket_name'), out_path, 'GET'), out_path)
 
+        client = boto3.client('s3')
         if ssm_action == 'get':
             (returncode, stdout, stderr) = self.exec_command(put_command, in_data=None, sudoable=False)
-            subprocess.check_output(get_command, shell=True)
+            with open(out_path, 'wb') as data:
+                client.download_fileobj(self.get_option('bucket_name'), out_path, data)
         else:
-            subprocess.check_output(put_command, shell=True)
+            with open(in_path, 'rb') as data:
+                client.upload_fileobj(data, self.get_option('bucket_name'), out_path)
             (returncode, stdout, stderr) = self.exec_command(get_command, in_data=None, sudoable=False)
 
         # Check the return code
