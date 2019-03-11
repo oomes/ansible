@@ -28,6 +28,11 @@ options:
     - name: region
     - name: aws_region
     default: 'us-east-1'
+  platform:
+    description: The platform of the EC2 instance
+    choices: [linux, windows]
+    vars:
+         - name: aws_ssm_platform
   bucket_name:
     description: The name of the S3 bucket used for file transfers.
     vars:
@@ -55,6 +60,8 @@ import os
 import boto3
 import getpass
 import json
+import os
+import pty
 import random
 import select
 import string
@@ -123,13 +130,16 @@ class Connection(ConnectionBase):
     ''' AWS SSM based connections '''
 
     transport = 'aws_ssm'
+    allow_executable = False
+    allow_extras = True
     has_pipelining = False
     _client = None
     _session = None
+    _stdout = None
     _session_id = ''
     _timeout = False
+    _windows = False
     MARK_LENGTH = 26
-    SESSION_START = 'Starting session with SessionId:'
 
     def __init__(self, *args, **kwargs):
         super(Connection, self).__init__(*args, **kwargs)
@@ -158,6 +168,7 @@ class Connection(ConnectionBase):
         profile_name = ''
         region_name = self.get_option('region')
         ssm_parameters = dict()
+        self._windows = self.get_option('platform') == 'windows'
 
         client = boto3.client('ssm', region_name=region_name)
         self._client = client
@@ -176,22 +187,26 @@ class Connection(ConnectionBase):
 
         display.vvv(u"SSM COMMAND: {0}".format(to_text(cmd)), host=self.host)
 
+        stdout_r, stdout_w = pty.openpty()
         session = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            stdout=stdout_w,
             stderr=subprocess.PIPE,
             close_fds=True,
             bufsize=0,
         )
 
         # Disable command echo and prompt.
-        session.stdin.write("stty -echo\n")
-        session.stdin.write("PS1=''\n")
+        if not self._windows:
+            session.stdin.write("stty -echo\n")
+            session.stdin.write("PS1=''\n")
 
+        os.close(stdout_w)
+        self._stdout = os.fdopen(stdout_r, 'rb', 0)
         self._session = session
         self._poll_stdout = select.poll()
-        self._poll_stdout.register(session.stdout, select.POLLIN)
+        self._poll_stdout.register(self._stdout, select.POLLIN)
 
         display.vvv(u"SSM CONNECTION ID: {0}".format(self._session_id), host=self.host)
 
@@ -215,7 +230,7 @@ class Connection(ConnectionBase):
         self._flush_stderr(session)
 
         # Send the command
-        if sudoable:
+        if not self._windows and sudoable:
             cmd = "sudo " + cmd
 
         # Handle the back-end throttling
@@ -225,7 +240,10 @@ class Connection(ConnectionBase):
         session.stdin.write("\n")
 
         # echo command status and end marker
-        session.stdin.write("echo $'\\n'$?\n")
+        if self._windows:
+            session.stdin.write("echo $?\n")
+        else:
+            session.stdin.write("echo $'\\n'$?\n")
         session.stdin.write("echo '" + mark_end + "'\n")
 
         # Read stdout between the markers
@@ -240,7 +258,7 @@ class Connection(ConnectionBase):
                 raise AnsibleConnectionFailure("SSM exec_command timeout on host: %s"
                                                % self.get_option('instance_id'))
             if self._poll_stdout.poll(1000):
-                line = self._session.stdout.readline()
+                line = self._stdout.readline()
                 display.vvvv(u"EXEC stdout line: {0}".format(to_text(line)), host=self.host)
             else:
                 display.vvvv(u"EXEC remaining: {0}".format(remaining), host=self.host)
@@ -251,17 +269,37 @@ class Connection(ConnectionBase):
                 continue
             if begin:
                 if mark_end in line:
-                    # Get command return code and throw away ending lines
-                    returncode = stdout.splitlines()[-1]
-                    for x in range(0, 3):
-                        stdout = stdout[:stdout.rfind('\n')]
+                    returncode, stdout = self._post_process(stdout)
                     break
                 else:
                     stdout = stdout + line
 
         stderr = self._flush_stderr(session)
 
-        return (int(returncode), stdout, stderr)
+        return (returncode, stdout, stderr)
+
+    def _post_process(self, stdout):
+        ''' extract command status and strip unwanted lines '''
+
+        if self._windows:
+            # Get command return code
+            status = stdout.splitlines()[-2]
+            if status.startswith('True'):
+                returncode = 0
+            elif status.startswith('False'):
+                returncode = -1
+            # Throw away ending lines
+            for x in range(0, 4):
+                stdout = stdout[:stdout.rfind('\n')]
+            # Throw away the 1st couple lines
+            stdout = "\n".join(stdout.splitlines()[2:])
+        else:
+            # Get command return code and throw away ending lines
+            returncode = stdout.splitlines()[-2]
+            for x in range(0, 3):
+                stdout = stdout[:stdout.rfind('\n')]
+
+        return (int(returncode), stdout)
 
     def _flush_stderr(self, subprocess):
         ''' read and return stderr with minimal blocking '''
