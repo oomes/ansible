@@ -28,11 +28,6 @@ options:
     - name: region
     - name: aws_region
     default: 'us-east-1'
-  platform:
-    description: The platform of the EC2 instance
-    choices: [linux, windows]
-    vars:
-         - name: aws_ssm_platform
   bucket_name:
     description: The name of the S3 bucket used for file transfers.
     vars:
@@ -134,18 +129,20 @@ class Connection(ConnectionBase):
     allow_executable = False
     allow_extras = True
     has_pipelining = False
+    module_implementation_preferences = ('.ps1', '.exe', '')
     _client = None
+    _is_powershell = False
     _session = None
     _stdout = None
     _session_id = ''
     _timeout = False
-    _windows = False
     MARK_LENGTH = 26
 
     def __init__(self, *args, **kwargs):
         super(Connection, self).__init__(*args, **kwargs)
 
         self.host = self._play_context.remote_addr
+        self._is_powershell = self._play_context.executable == 'powershell'
 
     def _connect(self):
         ''' connect to the host via ssm '''
@@ -169,7 +166,6 @@ class Connection(ConnectionBase):
         profile_name = ''
         region_name = self.get_option('region')
         ssm_parameters = dict()
-        self._windows = self.get_option('platform') == 'windows'
 
         client = boto3.client('ssm', region_name=region_name)
         self._client = client
@@ -199,7 +195,7 @@ class Connection(ConnectionBase):
         )
 
         # Disable command echo and prompt.
-        if not self._windows:
+        if not self._is_powershell:
             session.stdin.write("stty -echo\n")
             session.stdin.write("PS1=''\n")
 
@@ -226,28 +222,24 @@ class Connection(ConnectionBase):
         mark_start = "".join([random.choice(string.letters) for i in xrange(self.MARK_LENGTH)])
         mark_end = "".join([random.choice(string.letters) for i in xrange(self.MARK_LENGTH)])
 
-        # Send the start marker
-        if not self._windows:
-            # Echo start marker.
-            session.stdin.write("echo '" + mark_start + "'\n")
+        # Add echos for start marker and command status
+        if not self._is_powershell:
             if sudoable:
                 cmd = "sudo " + cmd
+            cmd = "echo '" + mark_start + "'\n" + cmd + "\necho $'\\n'$?\n"
         else:
-            cmd = cmd + "; echo '" + mark_start + "'"
+            cmd = cmd + "; echo $?; echo '" + mark_start + "'\n"
+
+        # add echo for end marker
+        cmd = cmd + "echo '" + mark_end + "'\n"
+
         self._flush_stderr(session)
 
         # Handle the back-end throttling
+        display.vvvvv(u"EXEC write: '{0}'".format(to_text(cmd)), host=self.host)
         for c in cmd:
             session.stdin.write(c)
             time.sleep(10 / 1000.0)
-        session.stdin.write("\n")
-
-        # echo command status and end marker
-        if self._windows:
-            session.stdin.write("echo $?\n")
-        else:
-            session.stdin.write("echo $'\\n'$?\n")
-        session.stdin.write("echo '" + mark_end + "'\n")
 
         # Read stdout between the markers
         stdout = ''
@@ -261,7 +253,7 @@ class Connection(ConnectionBase):
                 raise AnsibleConnectionFailure("SSM exec_command timeout on host: %s"
                                                % self.get_option('instance_id'))
             if self._poll_stdout.poll(1000):
-                line = self._stdout.readline()
+                line = self._filter_ansi(self._stdout.readline())
                 display.vvvv(u"EXEC stdout line: {0}".format(to_text(line)), host=self.host)
             else:
                 display.vvvv(u"EXEC remaining: {0}".format(remaining), host=self.host)
@@ -269,7 +261,7 @@ class Connection(ConnectionBase):
 
             if mark_start in line:
                 begin = True
-                if not self._escape_ansi(line).startswith(mark_start):
+                if not line.startswith(mark_start):
                     stdout = ''
                 continue
             if begin:
@@ -286,28 +278,46 @@ class Connection(ConnectionBase):
     def _post_process(self, stdout):
         ''' extract command status and strip unwanted lines '''
 
-        if self._windows:
+        extra_lines = 3
+
+        if self._is_powershell:
+            extra_lines = 4
+            stdout = stdout.replace('\r', '')
+            lines = stdout.splitlines()
             # Get command return code
-            status = stdout.splitlines()[-2]
-            if status.startswith('True'):
+            for line in stdout.splitlines():
+                display.vvvvv(u"POST_PROCESS powershell: {0}".format(to_text(line)), host=self.host)
+            if 'True' in lines[-1]:
+                extra_lines = 2
+                if len(lines) == 1:
+                    extra_lines = 0
+                    stdout = ''
                 returncode = 0
-            elif status.startswith('False'):
+            elif 'False' in lines[-1]:
+                extra_lines = 2
                 returncode = -1
-            # Throw away ending lines
-            for x in range(0, 4):
-                stdout = stdout[:stdout.rfind('\n')]
-            stdout = self._escape_ansi(stdout).replace('\r', '')
+            elif 'False' in lines[-2]:
+                extra_lines = 2
+                returncode = -1
+            elif 'True' in lines[-3]:
+                returncode = 0
+            else:
+                returncode = -51
         else:
-            # Get command return code and throw away ending lines
+            # Get command return code
             returncode = stdout.splitlines()[-2]
-            for x in range(0, 3):
-                stdout = stdout[:stdout.rfind('\n')]
+
+        # Throw away ending lines
+        for x in range(0, extra_lines):
+            stdout = stdout[:stdout.rfind('\n')]
 
         return (int(returncode), stdout)
 
-    def _escape_ansi(self, line):
-        ansi_escape = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
-        return ansi_escape.sub('', line)
+    def _filter_ansi(self, line):
+        ''' remove any ANSI terminal control codes '''
+
+        ansi_filter = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
+        return ansi_filter.sub('', line)
 
     def _flush_stderr(self, subprocess):
         ''' read and return stderr with minimal blocking '''
@@ -335,19 +345,19 @@ class Connection(ConnectionBase):
     def _file_transport_command(self, in_path, out_path, ssm_action):
         ''' transfer a file from using an intermediate S3 bucket '''
 
-        out_path = out_path.replace('\\', '/')
-        bucket_url = 's3://%s/%s' % (self.get_option('bucket_name'), out_path)
-        put_command = "curl --request PUT --upload-file '%s' '%s'" % (in_path, self._get_url('put_object', self.get_option('bucket_name'), out_path, 'PUT'))
-        get_command = "curl '%s' -o '%s'" % (self._get_url('get_object', self.get_option('bucket_name'), out_path, 'GET'), out_path)
+        s3_path = out_path.replace('\\', '/')
+        bucket_url = 's3://%s/%s' % (self.get_option('bucket_name'), s3_path)
+        put_command = "curl --request PUT --upload-file '%s' '%s'" % (in_path, self._get_url('put_object', self.get_option('bucket_name'), s3_path, 'PUT'))
+        get_command = "curl '%s' -o '%s'" % (self._get_url('get_object', self.get_option('bucket_name'), s3_path, 'GET'), out_path)
 
         client = boto3.client('s3')
         if ssm_action == 'get':
             (returncode, stdout, stderr) = self.exec_command(put_command, in_data=None, sudoable=False)
             with open(out_path, 'wb') as data:
-                client.download_fileobj(self.get_option('bucket_name'), out_path, data)
+                client.download_fileobj(self.get_option('bucket_name'), s3_path, data)
         else:
             with open(in_path, 'rb') as data:
-                client.upload_fileobj(data, self.get_option('bucket_name'), out_path)
+                client.upload_fileobj(data, self.get_option('bucket_name'), s3_path)
             (returncode, stdout, stderr) = self.exec_command(get_command, in_data=None, sudoable=False)
 
         # Check the return code
