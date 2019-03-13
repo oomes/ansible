@@ -63,6 +63,7 @@ import json
 import os
 import pty
 import random
+import re
 import select
 import string
 import subprocess
@@ -225,13 +226,15 @@ class Connection(ConnectionBase):
         mark_start = "".join([random.choice(string.letters) for i in xrange(self.MARK_LENGTH)])
         mark_end = "".join([random.choice(string.letters) for i in xrange(self.MARK_LENGTH)])
 
-        # Echo start marker.
-        session.stdin.write("echo '" + mark_start + "'\n")
+        # Send the start marker
+        if not self._windows:
+            # Echo start marker.
+            session.stdin.write("echo '" + mark_start + "'\n")
+            if sudoable:
+                cmd = "sudo " + cmd
+        else:
+            cmd = cmd + "; echo '" + mark_start + "'"
         self._flush_stderr(session)
-
-        # Send the command
-        if not self._windows and sudoable:
-            cmd = "sudo " + cmd
 
         # Handle the back-end throttling
         for c in cmd:
@@ -266,6 +269,8 @@ class Connection(ConnectionBase):
 
             if mark_start in line:
                 begin = True
+                if not self._escape_ansi(line).startswith(mark_start):
+                    stdout = ''
                 continue
             if begin:
                 if mark_end in line:
@@ -291,8 +296,7 @@ class Connection(ConnectionBase):
             # Throw away ending lines
             for x in range(0, 4):
                 stdout = stdout[:stdout.rfind('\n')]
-            # Throw away the 1st couple lines
-            stdout = "\n".join(stdout.splitlines()[2:])
+            stdout = self._escape_ansi(stdout).replace('\r', '')
         else:
             # Get command return code and throw away ending lines
             returncode = stdout.splitlines()[-2]
@@ -300,6 +304,10 @@ class Connection(ConnectionBase):
                 stdout = stdout[:stdout.rfind('\n')]
 
         return (int(returncode), stdout)
+
+    def _escape_ansi(self, line):
+        ansi_escape = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
+        return ansi_escape.sub('', line)
 
     def _flush_stderr(self, subprocess):
         ''' read and return stderr with minimal blocking '''
@@ -321,16 +329,16 @@ class Connection(ConnectionBase):
     def _get_url(self, client_method, bucket_name, out_path, http_method):
         ''' Generate URL for get_object / put_object '''
         client = boto3.client('s3')
-        url = client.generate_presigned_url(client_method, Params={'Bucket': bucket_name, 'Key': out_path}, ExpiresIn=3600, HttpMethod=http_method)
-        return (url.encode())
+        return client.generate_presigned_url(client_method, Params={'Bucket': bucket_name, 'Key': out_path}, ExpiresIn=3600, HttpMethod=http_method)
 
     @_ssm_retry
     def _file_transport_command(self, in_path, out_path, ssm_action):
         ''' transfer a file from using an intermediate S3 bucket '''
 
+        out_path = out_path.replace('\\', '/')
         bucket_url = 's3://%s/%s' % (self.get_option('bucket_name'), out_path)
-        put_command = 'curl --request PUT --upload-file %s "%s"' % (in_path, self._get_url('put_object', self.get_option('bucket_name'), out_path, 'PUT'))
-        get_command = 'curl -v "%s" -o %s' % (self._get_url('get_object', self.get_option('bucket_name'), out_path, 'GET'), out_path)
+        put_command = "curl --request PUT --upload-file '%s' '%s'" % (in_path, self._get_url('put_object', self.get_option('bucket_name'), out_path, 'PUT'))
+        get_command = "curl '%s' -o '%s'" % (self._get_url('get_object', self.get_option('bucket_name'), out_path, 'GET'), out_path)
 
         client = boto3.client('s3')
         if ssm_action == 'get':
