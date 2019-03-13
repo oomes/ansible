@@ -129,7 +129,6 @@ class Connection(ConnectionBase):
     allow_executable = False
     allow_extras = True
     has_pipelining = False
-    module_implementation_preferences = ('.ps1', '.exe', '')
     _client = None
     _is_powershell = False
     _session = None
@@ -139,10 +138,9 @@ class Connection(ConnectionBase):
     MARK_LENGTH = 26
 
     def __init__(self, *args, **kwargs):
-        super(Connection, self).__init__(*args, **kwargs)
 
+        super(Connection, self).__init__(*args, **kwargs)
         self.host = self._play_context.remote_addr
-        self._is_powershell = self._play_context.executable == 'powershell'
 
     def _connect(self):
         ''' connect to the host via ssm '''
