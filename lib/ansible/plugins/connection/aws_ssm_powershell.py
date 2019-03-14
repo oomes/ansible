@@ -77,6 +77,32 @@ class Connection(AwsSsmConnection):
 
         return cmd + "; echo $?; echo '" + mark_start + "'\n" + "echo '" + mark_end + "'\n"
 
+    def _file_transport_command(self, in_path, out_path, ssm_action):
+        ''' transfer a file from using an intermediate S3 bucket '''
+
+        s3_path = out_path.replace('\\', '/')
+        bucket_url = 's3://%s/%s' % (self.get_option('bucket_name'), s3_path)
+        put_command = "curl --request PUT --upload-file '%s' '%s'" % (in_path, self._get_url('put_object', self.get_option('bucket_name'), s3_path, 'PUT'))
+        get_command = "Invoke-WebRequest '%s' -OutFile '%s'" % (self._get_url('get_object', self.get_option('bucket_name'), s3_path, 'GET'), out_path)
+
+        client = boto3.client('s3')
+        if ssm_action == 'get':
+            (returncode, stdout, stderr) = self.exec_command(put_command, in_data=None, sudoable=False)
+            with open(out_path, 'wb') as data:
+                client.download_fileobj(self.get_option('bucket_name'), s3_path, data)
+        else:
+            with open(in_path, 'rb') as data:
+                client.upload_fileobj(data, self.get_option('bucket_name'), s3_path)
+            (returncode, stdout, stderr) = self.exec_command(get_command, in_data=None, sudoable=False)
+
+        # Check the return code
+        if returncode == 0:
+            return (returncode, stdout, stderr)
+        else:
+            raise AnsibleError("failed to transfer file to %s %s:\n%s\n%s" %
+                               (to_native(in_path), to_native(out_path), to_native(stdout), to_native(stderr)))
+
+
     def _post_process(self, stdout):
         ''' extract command status and strip unwanted lines '''
 
