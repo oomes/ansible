@@ -15,7 +15,6 @@ description:
 version_added: "2.8"
 requirements:
 - The control machine must have the aws session manager plugin installed.
-- The remote EC2 instance must have the curl installed.
 options:
   instance_id:
     description: The EC2 instance ID.
