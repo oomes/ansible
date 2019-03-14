@@ -81,7 +81,6 @@ class Connection(AwsSsmConnection):
 
         s3_path = out_path.replace('\\', '/')
         bucket_url = 's3://%s/%s' % (self.get_option('bucket_name'), s3_path)
-        put_command = "curl --request PUT --upload-file '%s' '%s'" % (in_path, self._get_url('put_object', self.get_option('bucket_name'), s3_path, 'PUT'))
         get_command = "Invoke-WebRequest '%s' -OutFile '%s'" % (self._get_url('get_object', self.get_option('bucket_name'), s3_path, 'GET'), out_path)
 
         client = boto3.client('s3')
