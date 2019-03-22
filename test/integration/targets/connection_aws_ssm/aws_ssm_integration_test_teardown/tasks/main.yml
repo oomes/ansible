@@ -8,14 +8,34 @@
       security_token: "{{security_token}}"
   no_log: true
 
-- name: Include variable file to delete infra
-  include_vars: "{{playbook_dir}}/vars_to_delete.yml"
+- name: Include variable file to delete EC2 Linux infra
+  include_vars: "{{playbook_dir}}/ec2_linux_vars_to_delete.yml"
+  when: "{{playbook_dir}}/ec2_linux_vars_to_delete.yml is exists"
 
-- name: Terminate EC2 instances that were previously launched
+- name: Include variable file to delete EC2 Windows infra
+  include_vars: "{{playbook_dir}}/ec2_windows_vars_to_delete.yml"
+  when: "{{playbook_dir}}/ec2_windows_vars_to_delete.yml is exists"
+
+- name: Include variable file to delete S3 Infra infra
+  include_vars: "{{playbook_dir}}/s3_vars_to_delete.yml"
+  when: "{{playbook_dir}}/s3_vars_to_delete.yml is exists"
+
+- name: Include variable file to delete IAM Role infra
+  include_vars: "{{playbook_dir}}/iam_role_vars_to_delete.yml"
+  when: "{{playbook_dir}}/iam_role_vars_to_delete.yml is exists"
+
+- name: Terminate Windows EC2 instances that were previously launched
+  ec2:
+    instance_ids:
+      - "{{windows_instance_id}}"
+    state: absent
+    <<: *aws_connection_info
+  ignore_errors: yes
+
+- name: Terminate Linux EC2 instances that were previously launched
   ec2:
     instance_ids:
       - "{{linux_instance_id}}"
-      - "{{windows_instance_id}}"
     state: absent
     <<: *aws_connection_info
   ignore_errors: yes
