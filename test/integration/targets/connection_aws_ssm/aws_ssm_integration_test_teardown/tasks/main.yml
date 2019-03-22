@@ -8,21 +8,41 @@
       security_token: "{{security_token}}"
   no_log: true
 
+- name: Check if ec2_linux_vars_to_delete.yml is present
+  stat:
+    path: "{{playbook_dir}}/ec2_linux_vars_to_delete.yml"
+  register: ec2_linux_vars_file
+
 - name: Include variable file to delete EC2 Linux infra
   include_vars: "{{playbook_dir}}/ec2_linux_vars_to_delete.yml"
-  when: "{{playbook_dir}}/ec2_linux_vars_to_delete.yml is exists"
+  when: ec2_linux_vars_file.stat.exists == True
+
+- name: Check if ec2_windows_vars_to_delete.yml is present
+  stat:
+    path: "{{playbook_dir}}/ec2_windows_vars_to_delete.yml"
+  register: ec2_windows_vars_file
 
 - name: Include variable file to delete EC2 Windows infra
   include_vars: "{{playbook_dir}}/ec2_windows_vars_to_delete.yml"
-  when: "{{playbook_dir}}/ec2_windows_vars_to_delete.yml is exists"
+  when: ec2_windows_vars_file.stat.exists == True
+
+- name: Check if s3_vars_to_delete.yml is present
+  stat:
+    path: "{{playbook_dir}}/s3_vars_to_delete.yml"
+  register: s3_vars_file
 
 - name: Include variable file to delete S3 Infra infra
   include_vars: "{{playbook_dir}}/s3_vars_to_delete.yml"
-  when: "{{playbook_dir}}/s3_vars_to_delete.yml is exists"
+  when: s3_vars_file.stat.exists == True
+
+- name: Check if iam_role_vars_to_delete.yml is present
+  stat:
+    path: "{{playbook_dir}}/iam_role_vars_to_delete.yml"
+  register: iam_role_vars_file
 
 - name: Include variable file to delete IAM Role infra
   include_vars: "{{playbook_dir}}/iam_role_vars_to_delete.yml"
-  when: "{{playbook_dir}}/iam_role_vars_to_delete.yml is exists"
+  when: iam_role_vars_file.stat.exists == True
 
 - name: Terminate Windows EC2 instances that were previously launched
   ec2:

@@ -2,16 +2,18 @@
 
 set -eux
 
+CMD_ARGS=$@
+
 # Destroy Environment
 cleanup() {
 
     cd ../connection_aws_ssm
 
-    ansible-playbook -c local aws_ssm_integration_test_teardown.yml "$@"
+    ansible-playbook -c local aws_ssm_integration_test_teardown.yml $CMD_ARGS
 
 }
 
-trap "cleanup $@" EXIT
+trap "cleanup" EXIT
 
 # Setup Environment
 ansible-playbook -c local aws_ssm_integration_test_setup.yml "$@"
