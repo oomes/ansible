@@ -101,25 +101,25 @@
       no_log: yes
 
   always:
-    - name: Create EC2 Linux var_to_delete.yml
+    - name: Create EC2 Linux vars_to_delete.yml
       template:
         dest: "{{playbook_dir}}/ec2_linux_vars_to_delete.yml"
         src: ec2_linux_vars_to_delete.yml.j2
       ignore_errors: yes
 
-    - name: Create EC2 Windows var_to_delete.yml
+    - name: Create EC2 Windows vars_to_delete.yml
       template:
         dest: "{{playbook_dir}}/ec2_windows_vars_to_delete.yml"
         src: ec2_windows_vars_to_delete.yml.j2
       ignore_errors: yes
 
-    - name: Create S3 var_to_delete.yml
+    - name: Create S3 vars_to_delete.yml
       template:
         dest: "{{playbook_dir}}/s3_vars_to_delete.yml"
         src: s3_vars_to_delete.yml.j2
       ignore_errors: yes
 
-    - name: Create IAM Role var_to_delete.yml
+    - name: Create IAM Role vars_to_delete.yml
       template:
         dest: "{{playbook_dir}}/iam_role_vars_to_delete.yml"
         src: iam_role_vars_to_delete.yml.j2
