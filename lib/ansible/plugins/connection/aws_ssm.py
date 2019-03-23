@@ -334,7 +334,6 @@ class Connection(ConnectionBase):
         self._flush_stderr(session)
 
         # Handle the back-end throttling
-        display.vvvvv(u"EXEC write: '{0}'".format(to_text(cmd)), host=self.host)
         for c in cmd:
             session.stdin.write(c.encode('utf-8'))
             time.sleep(15 / 1000.0)
@@ -363,7 +362,7 @@ class Connection(ConnectionBase):
                     stdout = ''
                 continue
             if begin:
-                if mark_end in line:
+                if line.startswith(mark_end):
                     for line in stdout.splitlines():
                         display.vvvvv(u"POST_PROCESS: {0}".format(to_text(line)), host=self.host)
                     returncode, stdout = self._post_process(stdout)
@@ -385,14 +384,17 @@ class Connection(ConnectionBase):
             self._session.stdin.write(cmd)
 
     def _wrap_command(self, cmd, sudoable, mark_start, mark_end):
-        ''' wrap commad so stdout and status can be extracted '''
+        ''' wrap command so stdout and status can be extracted '''
 
         if self.is_windows:
-            return cmd + "; echo $? $LASTEXITCODE; echo '" + mark_start + "'\n" + "echo '" + mark_end + "'\n"
+            cmd = cmd + "; echo " + mark_start + " $? $LASTEXITCODE; echo " + mark_end + "\n"
         else:
             if sudoable:
                 cmd = "sudo " + cmd
-            return "echo '" + mark_start + "'\n" + cmd + "\necho $'\\n'$?\n" + "echo '" + mark_end + "'\n"
+            cmd = "echo " + mark_start + "\n" + cmd + "\necho $'\\n'$?\n" + "echo " + mark_end + "\n"
+
+        display.vvvv(u"_wrap_command: '{0}'".format(to_text(cmd)), host=self.host)
+        return cmd
 
     def _post_process(self, stdout):
         ''' extract command status and strip unwanted lines '''
