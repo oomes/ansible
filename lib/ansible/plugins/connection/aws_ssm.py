@@ -362,7 +362,7 @@ class Connection(ConnectionBase):
                     stdout = ''
                 continue
             if begin:
-                if line.startswith(mark_end):
+                if mark_end in line:
                     for line in stdout.splitlines():
                         display.vvvvv(u"POST_PROCESS: {0}".format(to_text(line)), host=self.host)
                     returncode, stdout = self._post_process(stdout)
@@ -387,7 +387,7 @@ class Connection(ConnectionBase):
         ''' wrap command so stdout and status can be extracted '''
 
         if self.is_windows:
-            cmd = cmd + "; echo " + mark_start + " $? $LASTEXITCODE; echo " + mark_end + "\n"
+            cmd = cmd + "; echo " + mark_start + " $? $LASTEXITCODE\necho " + mark_end + "\n"
         else:
             if sudoable:
                 cmd = "sudo " + cmd
