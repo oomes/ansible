@@ -411,7 +411,10 @@ class Connection(ConnectionBase):
             if stdout.splitlines()[-1].isdigit():
                 returncode = int(stdout.splitlines()[-1])
                 stdout = stdout[:stdout.rfind('\n') + 1]
-                stdout = stdout.replace('\r\n', '').replace('\n', '')
+                stdout = stdout.replace('\r\n', '')
+                if stdout.endswith('\n0'):
+                    stdout = stdout[:-2]
+                stdout = stdout.replace('\n', '')
             else:
                 returncode = -51
 
