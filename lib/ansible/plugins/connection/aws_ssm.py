@@ -165,6 +165,7 @@ from ansible.module_utils.six import PY3
 from ansible.module_utils.six.moves import xrange
 from ansible.module_utils._text import to_bytes, to_native, to_text
 from ansible.plugins.connection import ConnectionBase
+from ansible.plugins.shell.powershell import _common_args
 from ansible.utils.display import Display
 
 display = Display()
@@ -391,7 +392,9 @@ class Connection(ConnectionBase):
         ''' wrap command so stdout and status can be extracted '''
 
         if self.is_windows:
-            cmd = cmd + "; echo " + mark_start + " $? $LASTEXITCODE\necho " + mark_end + "\n"
+            if not cmd.startswith(" ".join(_common_args) + " -EncodedCommand"):
+                cmd = self._shell._encode_script(cmd, preserve_rc=True)
+            cmd = cmd + "; echo " + mark_start + " $LASTEXITCODE\necho " + mark_end + "\n"
         else:
             if sudoable:
                 cmd = "sudo " + cmd
@@ -409,20 +412,6 @@ class Connection(ConnectionBase):
                 returncode = int(stdout.splitlines()[-1])
                 stdout = stdout[:stdout.rfind('\n') + 1]
                 stdout = stdout.replace('\r\n', '').replace('\n', '')
-
-            success = stdout.rfind('True')
-            fail = stdout.rfind('False')
-
-            if success > fail:
-                returncode = 0
-                stdout = stdout[:success]
-            elif fail > success:
-                try:
-                    # test using: ansible -m raw -a 'cmd /c exit 99'
-                    returncode = int(stdout[fail:].split()[1])
-                except (IndexError, ValueError):
-                    returncode = -1
-                stdout = stdout[:fail]
             else:
                 returncode = -51
 
